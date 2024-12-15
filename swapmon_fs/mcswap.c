@@ -32,6 +32,8 @@
 #include <linux/delay.h>
 #include <linux/version.h>
 #include <linux/pagemap.h>
+#include <linux/ktime.h>
+#include <linux/timekeeping.h>
 
 #include <rdma/ib_verbs.h>
 #include <rdma/rdma_cm.h>
@@ -85,10 +87,40 @@ static int __init mcswap_debugfs_init(void) {
 			mcswap_debugfs_root, &mcswap_sent_pages);
 	debugfs_create_ulong("store_avg_ns", S_IRUGO,
 			mcswap_debugfs_root, &mcswap_store_avg_ns);
-	debugfs_create_u32_array("store_measure_us", S_IRUGO,
-			mcswap_debugfs_root, &mcswap_store_times[0], MAX_LOG_TIME_ENTRIES);
-	debugfs_create_u32_array("load_measure_us", S_IRUGO,
-			mcswap_debugfs_root, &mcswap_load_times[0], MAX_LOG_TIME_ENTRIES);
+    #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 19, 999)
+    // Old API usage for debugfs_create_u32_array
+        debugfs_create_u32_array("store_measure_us", S_IRUGO,
+                mcswap_debugfs_root, &mcswap_store_times[0], MAX_LOG_TIME_ENTRIES);
+        debugfs_create_u32_array("load_measure_us", S_IRUGO,
+                mcswap_debugfs_root, &mcswap_load_times[0], MAX_LOG_TIME_ENTRIES);
+    #else
+        // New API usage for debugfs_create_u32_array
+        struct debugfs_u32_array store_measure_array = {
+            .array = mcswap_store_times,
+            .n_elements = MAX_LOG_TIME_ENTRIES,
+        };
+        struct debugfs_u32_array load_measure_array = {
+            .array = mcswap_load_times,
+            .n_elements = MAX_LOG_TIME_ENTRIES,
+        };
+        debugfs_create_u32_array("store_measure_us", S_IRUGO,
+                mcswap_debugfs_root, &store_measure_array);
+        debugfs_create_u32_array("load_measure_us", S_IRUGO,
+			mcswap_debugfs_root, &load_measure_array); 
+    #endif
+	
+
+    // debugfs_create_u32_array("store_measure_us", S_IRUGO,
+	// 		mcswap_debugfs_root, (struct debugfs_u32_array *) mcswap_store_times);
+	// debugfs_create_u32_array("load_measure_us", S_IRUGO,
+	// 		mcswap_debugfs_root, (struct debugfs_u32_array *) mcswap_load_times); 
+
+    // // In mcswap_debugfs_init()
+    // debugfs_create_u32_array("store_measure_us", S_IRUGO,
+    //         mcswap_debugfs_root, &mcswap_store_times);
+
+    // debugfs_create_u32_array("load_measure_us", S_IRUGO,
+    //         mcswap_debugfs_root, &mcswap_load_times);                   
 	return 0;
 }
 #else
@@ -547,7 +579,7 @@ static int __mcswap_store_sync(unsigned swap_type, pgoff_t offset,
 		struct page *page) {
 	int ret;
 #ifdef BENCH
-	struct timespec ts_start, ts_end;
+	struct timespec64 ts_start, ts_end;
 	int n_pages = atomic_read(&mcswap_stored_pages);
 	long elapsed;
 #endif
@@ -560,7 +592,7 @@ static int __mcswap_store_sync(unsigned swap_type, pgoff_t offset,
 #endif
 
 #ifdef BENCH
-	getnstimeofday(&ts_start);
+	ktime_get_real_ts64(&ts_start);
 #endif
 	ret = swapmon_store_sync(swap_type, offset, page);
 	if (ret) {
@@ -569,8 +601,9 @@ static int __mcswap_store_sync(unsigned swap_type, pgoff_t offset,
 	}
 	atomic_inc(&mcswap_stored_pages);
 #ifdef BENCH
-	getnstimeofday(&ts_end);
-	elapsed = ts_end.tv_nsec - ts_start.tv_nsec;
+	ktime_get_real_ts64(&ts_end);
+	// elapsed = ts_end.tv_nsec - ts_start.tv_nsec;
+    elapsed = timespec64_to_ns(&ts_end) - timespec64_to_ns(&ts_start);
 	// iteratively calculate average to avoid overflow
 	mcswap_store_avg_ns += (elapsed - mcswap_store_avg_ns) / (n_pages + 1);
 	mcswap_store_times[n_pages % MAX_LOG_TIME_ENTRIES] = elapsed;
@@ -655,7 +688,7 @@ static void page_read_done(struct ib_cq *cq, struct ib_wc *wc) {
 
 static int mcswap_rdma_read_sync(struct page *page,
 		struct mcswap_entry *ent, struct server_ctx *sctx) {
-	struct timespec ts_start, ts_now;
+	struct timespec64 ts_start, ts_now;
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4,19,0)
 	const struct ib_send_wr *bad_wr;
 #else
@@ -709,10 +742,10 @@ static int mcswap_rdma_read_sync(struct page *page,
 	atomic_inc(&ctrl->inflight_loads);
 
 	if (sctx->qp->send_cq->poll_ctx == IB_POLL_DIRECT) {
-		getnstimeofday(&ts_start);
+		ktime_get_real_ts64(&ts_start);
 		while (atomic_read(&ctrl->inflight_loads) > 0) {
 		  ib_process_cq_direct(sctx->qp->send_cq, 1);
-			getnstimeofday(&ts_now);
+			ktime_get_real_ts64(&ts_now);
 			if (ts_now.tv_sec - ts_start.tv_sec >=
 					MCSWAP_LOAD_PAGE_TIMEOUT_SEC) {
 				pr_err("timed out when reading page %lu\n", ent->offset);
@@ -771,12 +804,12 @@ static int mcswap_load_sync(unsigned swap_type, pgoff_t offset,
 		struct page *page) {
 	int ret;
 #ifdef BENCH
-	struct timespec ts_start, ts_end;
+	struct timespec64 ts_start, ts_end;
 	int n_pages = atomic_read(&mcswap_loaded_pages);
 	long elapsed;
 #endif
 #ifdef BENCH
-	getnstimeofday(&ts_start);
+	ktime_get_real_ts64(&ts_start);
 #endif
 	ret = __mcswap_load_sync(swap_type, offset, page);
 	if (unlikely(ret)) {
@@ -785,8 +818,9 @@ static int mcswap_load_sync(unsigned swap_type, pgoff_t offset,
 	}
 	atomic_inc(&mcswap_loaded_pages);
 #ifdef BENCH
-	getnstimeofday(&ts_end);
-	elapsed = ts_end.tv_nsec - ts_start.tv_nsec;
+	ktime_get_real_ts64(&ts_end);
+	// elapsed = ts_end.tv_nsec - ts_start.tv_nsec;
+    elapsed = timespec64_to_ns(&ts_end) - timespec64_to_ns(&ts_start);
 	mcswap_load_times[n_pages % MAX_LOG_TIME_ENTRIES] = elapsed;
 #endif
 	return 0;
@@ -1381,14 +1415,14 @@ static int __init mcswap_wait_for_rc_establishment(struct server_ctx *ctx) {
 }
 
 static int __init mcswap_wait_for_server_mcast_ack(struct server_ctx *ctx) {
-	struct timespec ts_start, ts_now;
+	struct timespec64 ts_start, ts_now;
 	int wait_ret;
 
 	if (ctx->recv_cq->poll_ctx == IB_POLL_DIRECT) {
-		getnstimeofday(&ts_start);
+		ktime_get_real_ts64(&ts_start);
 		while (!try_wait_for_completion(&ctx->mcast_ack)) {
 		  ib_process_cq_direct(ctx->recv_cq, 1);
-			getnstimeofday(&ts_now);
+			ktime_get_real_ts64(&ts_now);
 			if (ts_now.tv_sec - ts_start.tv_sec >=
 					MCSWAP_MCAST_JOIN_TIMEOUT_SEC) {
 				return -ETIME;
