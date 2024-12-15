@@ -1,13 +1,16 @@
 #!/bin/bash
 
 # module parameters
-SERVER_IP='192.168.1.20'
+SERVER_IP='10.1.10.138'
 SERVER_PORT=10000
 
 IB_IF=$1
-[ -z "$IB_IF" ] && IB_IF="ib0"
+[ -z "$IB_IF" ] && IB_IF="enp23s0f1np1"
 
-CLIENT_IP=`ip -o -4 addr list ib0 | awk '{print $4}' | cut -d/ -f1`
+
+
+CLIENT_IP=`ip -o -4 addr list ${IB_IF} | awk '{print $4}' | cut -d/ -f1`
+# ip -o -4 addr list enp23s0f1np1 | awk '{print $4}' | cut -d/ -f1
 if [ -z "$CLIENT_IP" ]; then
 	echo "Could not extract IP address from interface ${IB_IF}"
 	exit 1
@@ -25,15 +28,18 @@ if [ $? -eq 0 ]; then
 	sudo rmmod ${MODULE_NAME}
 fi
 
+set -eux
+
 # build module
 make clean && make
 
 # TODO(dimlek): what happens when multiple ko files exist?
 MODULE_FILENAME=`modinfo -F filename *.ko`
+# echo 'module mcswap +p' | sudo tee /sys/kernel/debug/dynamic_debug/control
 
 # insert module
 sudo insmod ${MODULE_FILENAME} cip=${CLIENT_IP} \
-	endpoint=${SERVER_IP}:${SERVER_PORT} enable_async_mode=1 enable_poll_mode=1
+	endpoint=${SERVER_IP}:${SERVER_PORT} enable_async_mode=1 enable_poll_mode=1 # force
 if [ $? -ne 0 ]; then
 	echo "Error when inserting module, use 'dmesg' command for kernel logs"
 fi

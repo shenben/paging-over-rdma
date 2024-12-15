@@ -1446,37 +1446,77 @@ static int __init mcswap_wait_for_server_mcast_ack(struct server_ctx *ctx) {
 	return 0;
 }
 
+// static int mcswap_check_hca_support(struct ib_device *dev, u8 port_num) {
+// 	struct ib_port_attr port_attr;
+// 	int ret;
+
+// 	ret = ib_query_port(dev, port_num, &port_attr);
+// 	if (ret) {
+// 		pr_err("ib_query_port failed (%d) to query port_num = %u\n",
+// 				ret, port_num);
+// 		return -ENODEV;
+// 	}
+
+// 	// ensure that memory registrations are supported
+// 	if (!(dev->attrs.device_cap_flags & IB_DEVICE_MEM_MGT_EXTENSIONS)) {
+// 		pr_err("memory registrations not supported on port = %u\n", port_num);
+// 		return -EOPNOTSUPP;
+// 	}
+
+// 	// ensure that multicast is supported by the specified port of HCA
+// 	if (!rdma_cap_ib_mcast(dev, port_num)) {
+// 		pr_err("port %u of IB device doesn't support multicast\n", port_num);
+// 		return -EOPNOTSUPP;
+// 	}
+
+// 	// ensure that the port we are using has an active MTU of 4096KB
+// 	if (port_attr.active_mtu != IB_MTU_4096) {
+// 		pr_err("port_num = %u needs active MTU = %u (current MTU = %u)\n",
+// 				port_num, ib_mtu_enum_to_int(IB_MTU_4096),
+// 				ib_mtu_enum_to_int(port_attr.active_mtu));
+// 		return -EOPNOTSUPP;
+// 	}
+
+// 	return 0;
+// }
 static int mcswap_check_hca_support(struct ib_device *dev, u8 port_num) {
 	struct ib_port_attr port_attr;
 	int ret;
 
+	// pr_info("mcswap: Checking HCA support for port %u...\n", port_num);
+    pr_info("mcswap: Checking HCA support for device %s on port %u\n", dev->name, port_num);
+
 	ret = ib_query_port(dev, port_num, &port_attr);
 	if (ret) {
-		pr_err("ib_query_port failed (%d) to query port_num = %u\n",
-				ret, port_num);
+		pr_err("mcswap: ib_query_port failed (ret = %d) for port_num = %u\n", ret, port_num);
 		return -ENODEV;
 	}
+	pr_info("mcswap: Port attributes queried successfully.\n");
 
-	// ensure that memory registrations are supported
+	// Ensure memory registrations are supported
 	if (!(dev->attrs.device_cap_flags & IB_DEVICE_MEM_MGT_EXTENSIONS)) {
-		pr_err("memory registrations not supported on port = %u\n", port_num);
+		pr_err("mcswap: Memory registrations not supported on port = %u\n", port_num);
 		return -EOPNOTSUPP;
 	}
+	pr_info("mcswap: Memory registrations supported on port %u.\n", port_num);
 
-	// ensure that multicast is supported by the specified port of HCA
+	// Ensure multicast is supported
 	if (!rdma_cap_ib_mcast(dev, port_num)) {
-		pr_err("port %u of IB device doesn't support multicast\n", port_num);
+		pr_err("mcswap: Port %u of IB device doesn't support multicast\n", port_num);
 		return -EOPNOTSUPP;
 	}
+	pr_info("mcswap: Multicast supported on port %u.\n", port_num);
 
-	// ensure that the port we are using has an active MTU of 4096KB
+	// Ensure active MTU is 4096KB
 	if (port_attr.active_mtu != IB_MTU_4096) {
-		pr_err("port_num = %u needs active MTU = %u (current MTU = %u)\n",
+		pr_err("mcswap: Port_num = %u needs active MTU = %u (current MTU = %u)\n",
 				port_num, ib_mtu_enum_to_int(IB_MTU_4096),
 				ib_mtu_enum_to_int(port_attr.active_mtu));
 		return -EOPNOTSUPP;
 	}
+	pr_info("mcswap: Port %u has active MTU = %u.\n", port_num, ib_mtu_enum_to_int(port_attr.active_mtu));
 
+	pr_info("mcswap: HCA support check passed for port %u.\n", port_num);
 	return 0;
 }
 
@@ -1727,66 +1767,153 @@ static int __init mcswap_parse_module_params(void) {
 	return 0;
 }
 
+// static int __init mcswap_init(void) {
+// 	enum ib_poll_context poll_ctx;
+// 	int comp_vector = 0;
+// 	int ret, i;
+// 	ret = mcswap_alloc_ctrl_resources();
+// 	if (ret) {
+// 		return ret;
+// 	}
+
+// 	ret = mcswap_parse_module_params();
+// 	if (ret) {
+// 		return ret;
+// 	}
+
+// 	ret = mcswap_rdma_mcast_init(&ctrl->mcast);
+// 	if (ret) {
+// 		pr_err("failed to setup multicast\n");
+// 		goto destroy_caches;
+// 	}
+
+// 	if (!ctrl->dev) {
+// 		return -ENODEV;
+// 	}
+
+// 	// since we already have a handle here on the HCA, we can create the
+// 	// shared send completion queue for all the RCs to the mem servers
+// 	poll_ctx = enable_poll_mode ? IB_POLL_DIRECT : IB_POLL_SOFTIRQ;
+// 	ctrl->send_cq = ib_alloc_cq(ctrl->dev, ctrl, 8096,
+// 			comp_vector, poll_ctx);
+// 	if (IS_ERR(ctrl->send_cq)) {
+// 		ret = PTR_ERR(ctrl->send_cq);
+// 		goto destroy_mcast_resources;
+// 	}
+
+// 	for (i = 0; i < ctrl->n_servers; i++) {
+// 		ret = mcswap_server_connect(&ctrl->server[i]);
+// 		if (ret)
+// 			goto destroy_send_cq;
+// 	}
+
+// 	if (enable_async_mode) {
+// 		frontswap_register_ops(&mcswap_async_ops);
+// 		frontswap_writethrough(true);
+// 	} else {
+// 		frontswap_register_ops(&mcswap_sync_ops);
+// 	}
+
+// 	if (mcswap_debugfs_init()) {
+// 		pr_warn("debugfs initialization failed.\n");
+// 	}
+
+// 	pr_info("module loaded successfully.\n");
+// 	return 0;
+
+// destroy_send_cq:
+// 	ib_free_cq(ctrl->send_cq);
+// destroy_mcast_resources:
+// 	mcswap_destroy_mcast_resources();
+// destroy_caches:
+// 	mcswap_destroy_caches();
+// 	return ret;
+// }
+
 static int __init mcswap_init(void) {
 	enum ib_poll_context poll_ctx;
 	int comp_vector = 0;
 	int ret, i;
+
+	pr_info("mcswap: Initializing module...\n");
+
 	ret = mcswap_alloc_ctrl_resources();
 	if (ret) {
+		pr_err("mcswap: Failed to allocate control resources (ret = %d)\n", ret);
 		return ret;
 	}
+	pr_info("mcswap: Control resources allocated successfully.\n");
 
 	ret = mcswap_parse_module_params();
 	if (ret) {
-		return ret;
+		pr_err("mcswap: Failed to parse module parameters (ret = %d)\n", ret);
+		goto destroy_caches;
 	}
+	pr_info("mcswap: Module parameters parsed successfully.\n");
 
 	ret = mcswap_rdma_mcast_init(&ctrl->mcast);
 	if (ret) {
-		pr_err("failed to setup multicast\n");
+		pr_err("mcswap: Failed to setup multicast (ret = %d)\n", ret);
 		goto destroy_caches;
 	}
+	pr_info("mcswap: Multicast setup completed successfully.\n");
 
 	if (!ctrl->dev) {
-		return -ENODEV;
-	}
-
-	// since we already have a handle here on the HCA, we can create the
-	// shared send completion queue for all the RCs to the mem servers
-	poll_ctx = enable_poll_mode ? IB_POLL_DIRECT : IB_POLL_SOFTIRQ;
-	ctrl->send_cq = ib_alloc_cq(ctrl->dev, ctrl, 8096,
-			comp_vector, poll_ctx);
-	if (IS_ERR(ctrl->send_cq)) {
-		ret = PTR_ERR(ctrl->send_cq);
+		pr_err("mcswap: No IB device found.\n");
+		ret = -ENODEV;
 		goto destroy_mcast_resources;
 	}
+	pr_info("mcswap: IB device found.\n");
 
+	// Create shared send completion queue
+	poll_ctx = enable_poll_mode ? IB_POLL_DIRECT : IB_POLL_SOFTIRQ;
+	ctrl->send_cq = ib_alloc_cq(ctrl->dev, ctrl, 8096, comp_vector, poll_ctx);
+	if (IS_ERR(ctrl->send_cq)) {
+		ret = PTR_ERR(ctrl->send_cq);
+		pr_err("mcswap: Failed to allocate send completion queue (ret = %d)\n", ret);
+		goto destroy_mcast_resources;
+	}
+	pr_info("mcswap: Send completion queue allocated successfully.\n");
+
+	// Connect to servers
 	for (i = 0; i < ctrl->n_servers; i++) {
 		ret = mcswap_server_connect(&ctrl->server[i]);
-		if (ret)
+		if (ret) {
+			pr_err("mcswap: Failed to connect to server %d (ret = %d)\n", i, ret);
 			goto destroy_send_cq;
+		}
+		pr_info("mcswap: Connected to server %d successfully.\n", i);
 	}
 
+	// Register frontswap ops
 	if (enable_async_mode) {
 		frontswap_register_ops(&mcswap_async_ops);
 		frontswap_writethrough(true);
+		pr_info("mcswap: Async mode enabled.\n");
 	} else {
 		frontswap_register_ops(&mcswap_sync_ops);
+		pr_info("mcswap: Sync mode enabled.\n");
 	}
 
+	// Initialize debugfs
 	if (mcswap_debugfs_init()) {
-		pr_warn("debugfs initialization failed.\n");
+		pr_warn("mcswap: Debugfs initialization failed.\n");
+	} else {
+		pr_info("mcswap: Debugfs initialized successfully.\n");
 	}
 
-	pr_info("module loaded successfully.\n");
+	pr_info("mcswap: Module loaded successfully.\n");
 	return 0;
 
 destroy_send_cq:
 	ib_free_cq(ctrl->send_cq);
+	pr_info("mcswap: Send completion queue destroyed.\n");
 destroy_mcast_resources:
 	mcswap_destroy_mcast_resources();
+	pr_info("mcswap: Multicast resources destroyed.\n");
 destroy_caches:
 	mcswap_destroy_caches();
+	pr_info("mcswap: Control resources destroyed.\n");
 	return ret;
 }
 
