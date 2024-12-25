@@ -70,6 +70,8 @@ int main() {
     return EXIT_SUCCESS;
 }
 /*
+$ gcc -o check_rdma_multicast check_rdma_multicast.c -libverbs -lrdmacm
+
 (op-tf-py3.9) pxg@node1:~/paging-over-rdma/Multicast_Support$ ./check_rdma_multicast
 Found 1 IB device(s).
 
